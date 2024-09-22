@@ -2,6 +2,7 @@
 #include <vector>
 #include <random>
 #include <thread>
+#include "parser.hh"
 
 using namespace std;
 
@@ -110,6 +111,26 @@ void trial(solution_t x, const qubo_t& Q) {
     cout << "Energy: " << evaluate(x, Q) << endl << endl;
 }
 
+qubo_t unsparse(const map<pair<int, int>, double>& sparse) {
+    int n = 0;
+    for (const auto& entry : sparse) {
+        n = max(n, max(entry.first.first, entry.first.second));
+    }
+    n++;
+
+    qubo_t Q(n, vector<double>(n, 0.0));
+    for (const auto& entry : sparse) {
+        Q[entry.first.first][entry.first.second] = entry.second;
+    }
+    return Q;
+}
+
+/* todo:
+use sparse qubo
+maybe flip all bits in sequence instead of random ones?
+optimize evaluate by getting diff caused by flipping one bit
+*/
+
 int main() {
     // qubo_t Q = {
     //     { -2,  1,  1,  0,  0 },
@@ -119,22 +140,29 @@ int main() {
     //     {  0,  0,  1,  1, -2 }
     // };
 
-    qubo_t Q = {
-        {-17, 10, 10, 10, 0, 20},
-        {10, -18, 10, 10, 10, 20},
-        {10, 10, -29, 10, 20, 20},
-        {10, 10, 10, -19, 10, 10},
-        {0, 10, 20, 10, -17, 10},
-        {20, 20, 20, 10, 10, -28}
-    };
+    map<pair<int, int>, double> sparse = parse_qubo(read_file("qubo.txt"));
+    // for (const auto& entry : sparse) {
+    //     cout << "[" << entry.first.first << ", " << entry.first.second << "] -> " << entry.second << endl;
+    // }
 
-    trial({1, 0, 0, 0, 1, 0}, Q);
+    // qubo_t Q = {
+    //     {-17, 10, 10, 10, 0, 20},
+    //     {10, -18, 10, 10, 10, 20},
+    //     {10, 10, -29, 10, 20, 20},
+    //     {10, 10, 10, -19, 10, 10},
+    //     {0, 10, 20, 10, -17, 10},
+    //     {20, 20, 20, 10, 10, -28}
+    // };
+
+    qubo_t Q = unsparse(sparse);
+
+    // trial({1, 0, 0, 0, 1, 0}, Q);
 
     // unsigned seed = time(0); // 42
     random_device rd;
     unsigned seed = rd();
 
-    settings s = {.max_iter = 1000, .T_0 = 100.0, .temp_scheduler = linear_scheduler, .seed = seed};
+    settings s = {.max_iter = 100000, .T_0 = 100.0, .temp_scheduler = linear_scheduler, .seed = seed};
 
     result r = multithreaded_sim_anneal(Q, s, 4);
 
