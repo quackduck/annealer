@@ -1,4 +1,5 @@
 #include <iostream>
+#include <ostream>
 #include <vector>
 #include <random>
 #include <thread>
@@ -97,12 +98,21 @@ double linear_scheduler(double T_0, double T, int iter, int max_iter) {
 }
 
 double geometric_scheduler(double T_0, double T, int iter, int max_iter) {
-    return T * 0.99;
+    return T * 0.999;
 }
 
 ostream& operator << (ostream& os, const solution_t& x) {
     for (auto xi : x)
         os << xi << ' ';
+    return os;
+}
+
+ostream& operator << (ostream& os, const qubo_t& Q) {
+    for (const auto& row : Q) {
+        for (auto entry : row)
+            os << entry << ' ';
+        os << endl;
+    }
     return os;
 }
 
@@ -141,9 +151,6 @@ int main() {
     // };
 
     map<pair<int, int>, double> sparse = parse_qubo(read_file("qubo.txt"));
-    // for (const auto& entry : sparse) {
-    //     cout << "[" << entry.first.first << ", " << entry.first.second << "] -> " << entry.second << endl;
-    // }
 
     // qubo_t Q = {
     //     {-17, 10, 10, 10, 0, 20},
@@ -154,7 +161,9 @@ int main() {
     //     {20, 20, 20, 10, 10, -28}
     // };
 
-    qubo_t Q = unsparse(sparse);
+    qubo_t Q = unsparse(sparse); // just for now.
+
+    // cout << Q << endl;
 
     // trial({1, 0, 0, 0, 1, 0}, Q);
 
@@ -162,7 +171,7 @@ int main() {
     random_device rd;
     unsigned seed = rd();
 
-    settings s = {.max_iter = 100000, .T_0 = 100.0, .temp_scheduler = linear_scheduler, .seed = seed};
+    settings s = {.max_iter = 10000, .T_0 = 100.0, .temp_scheduler = geometric_scheduler, .seed = seed};
 
     result r = multithreaded_sim_anneal(Q, s, 4);
 
