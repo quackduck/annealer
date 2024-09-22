@@ -8,7 +8,20 @@
 using namespace std;
 
 using solution_t = vector<bool>;
-using qubo_t = vector<vector<double>>;
+// using qubo_t = vector<vector<double>>;
+using qubo_t = map<pair<int, int>, double>;
+
+ostream& operator << (ostream& os, const solution_t& x) {
+    for (auto xi : x) os << xi << ' ';
+    return os;
+}
+
+ostream& operator << (ostream& os, const qubo_t& Q) {
+    for (const auto& entry : Q) {
+        os << '[' + entry.first.first << ' ' << entry.first.second << "] : " << entry.second << endl;
+    }
+    return os;
+}
 
 struct settings {
     int max_iter;
@@ -24,18 +37,29 @@ struct result {
 
 double evaluate(const solution_t& x, const qubo_t& Q) {
     double value = 0.0;
-    for (int i = 0; i < x.size(); i++) 
-        for (int j = 0; j < x.size(); j++)
-            value += Q[i][j] * x[i] * x[j];
+    for (const auto& entry : Q) {
+        // value += entry.second * x[entry.first.first] * x[entry.first.second];
+        if (x[entry.first.first] && x[entry.first.second]) value += entry.second;
+    }
     return value;
 }
 
+int qubo_size(const qubo_t& Q) {
+    int n = 0;
+    for (const auto& entry : Q) {
+        n = max(n, entry.first.first);
+    }
+    return n + 1; // 0 indexed
+}
+
 result sim_anneal(const qubo_t& Q, const settings s) { // intentionally get copy of settings
+    int n = qubo_size(Q);
+
     mt19937 gen(s.seed);
     uniform_real_distribution<> dis(0.0, 1.0);
-    uniform_int_distribution<> flip_dis(0, Q.size() - 1);
+    uniform_int_distribution<> flip_dis(0, n - 1);
 
-    solution_t x(Q.size(), 0);
+    solution_t x(n, 0);
     for (auto xi : x) {
         xi = dis(gen) < 0.5 ? 0 : 1;
     }
@@ -101,39 +125,24 @@ double geometric_scheduler(double T_0, double T, int iter, int max_iter) {
     return T * 0.999;
 }
 
-ostream& operator << (ostream& os, const solution_t& x) {
-    for (auto xi : x)
-        os << xi << ' ';
-    return os;
-}
-
-ostream& operator << (ostream& os, const qubo_t& Q) {
-    for (const auto& row : Q) {
-        for (auto entry : row)
-            os << entry << ' ';
-        os << endl;
-    }
-    return os;
-}
-
 void trial(solution_t x, const qubo_t& Q) {
     cout << "For solution: " << x << endl;
     cout << "Energy: " << evaluate(x, Q) << endl << endl;
 }
 
-qubo_t unsparse(const map<pair<int, int>, double>& sparse) {
-    int n = 0;
-    for (const auto& entry : sparse) {
-        n = max(n, max(entry.first.first, entry.first.second));
-    }
-    n++;
+// qubo_t unsparse(const map<pair<int, int>, double>& sparse) {
+//     int n = 0;
+//     for (const auto& entry : sparse) {
+//         n = max(n, max(entry.first.first, entry.first.second));
+//     }
+//     n++;
 
-    qubo_t Q(n, vector<double>(n, 0.0));
-    for (const auto& entry : sparse) {
-        Q[entry.first.first][entry.first.second] = entry.second;
-    }
-    return Q;
-}
+//     qubo_t Q(n, vector<double>(n, 0.0));
+//     for (const auto& entry : sparse) {
+//         Q[entry.first.first][entry.first.second] = entry.second;
+//     }
+//     return Q;
+// }
 
 /* todo:
 use sparse qubo
@@ -150,7 +159,7 @@ int main() {
     //     {  0,  0,  1,  1, -2 }
     // };
 
-    map<pair<int, int>, double> sparse = parse_qubo(read_file("qubo.txt"));
+    qubo_t Q = parse_qubo(read_file("qubo.txt"));
 
     // qubo_t Q = {
     //     {-17, 10, 10, 10, 0, 20},
@@ -161,7 +170,7 @@ int main() {
     //     {20, 20, 20, 10, 10, -28}
     // };
 
-    qubo_t Q = unsparse(sparse); // just for now.
+    // qubo_t Q = unsparse(sparse); // just for now.
 
     // cout << Q << endl;
 
