@@ -71,43 +71,6 @@ double evaluateDiff(const solution_t& x, const qubo_t& Q, int flip_idx) {
         }
     }
     return diff;
-
-    // for (int i = 0; i < x.size(); i++) {
-    //     // double coupling = Q[{flip_idx, i}] + Q[{i, flip_idx}];
-    //     // Q is const, so we can't use the above line.
-    //     double coupling = 0;
-    //     auto it = Q.find({flip_idx, i});
-    //     if (it != Q.end()) {
-    //         coupling += it->second;
-    //     }
-    //     if (i != flip_idx) {
-    //         it = Q.find({i, flip_idx});
-    //         if (it != Q.end()) {
-    //             coupling += it->second;
-    //         }
-    //     }
-
-    //     if (coupling != 0) {
-    //         bool i_on = x[i];
-    //         bool flip_on = x[flip_idx];
-    //         if (i_on && flip_on) {
-    //             // currently on. flipping either will turn it off.
-    //             diff -= coupling;
-    //         } else if (i_on || flip_on) {
-    //             // one of them is on. 
-    //             // both will become on if the one we're flipping is off.
-    //             if (!flip_on) {
-    //                 diff += coupling;
-    //             }
-    //         } else {
-    //             // both off. flip it on only if both will become on.
-    //             if (i == flip_idx) {
-    //                 diff += coupling;
-    //             }
-    //         }
-    //     }
-    // }
-    // return diff;
 }
 
 int qubo_size(const qubo_t& Q) {
@@ -161,8 +124,18 @@ result sim_anneal(const qubo_t& Q, const settings s) { // intentionally get copy
     return {best_x, best_f_x};
 }
 
+void assert_lower_triangular(const qubo_t& Q) {
+    for (const auto& entry : Q) {
+        if (entry.first.first < entry.first.second) {
+            cerr << "Error: QUBO is not in lower triangular form." << endl;
+            exit(1);
+        }
+    }
+}
+
 // returns sorted results of length num_threads * samples_per_thread
 vector<result> multithreaded_sim_anneal(const qubo_t& Q, const settings s, int num_threads, int samples_per_thread = 1) {
+    assert_lower_triangular(Q);
     vector<thread> threads;
     vector<result> results(num_threads * samples_per_thread);
     for (int i = 0; i < num_threads; i++) {
@@ -187,10 +160,6 @@ vector<result> multithreaded_sim_anneal(const qubo_t& Q, const settings s, int n
 double linear_scheduler(double T_0, double T, int iter, int max_iter) {
     return T_0 - (T_0 / max_iter) * iter;
 }
-
-// double geometric_scheduler(double T_0, double T, int iter, int max_iter) {
-//     return T * 0.99;
-// }
 
 scheduler_t make_geometric_scheduler(double alpha) {
     return [alpha](double T_0, double T, int iter, int max_iter) {
@@ -220,17 +189,31 @@ void present_results(const vector<result>& results) {
     }
 }
 
-qubo_t sparsen(vector<vector<double>> dense) {
-    qubo_t sparse;
+qubo_t condense(vector<vector<double>> sparse) {
+    qubo_t dense;
 
-    for (int i = 0; i < dense.size(); i++) {
-        for (int j = 0; j < dense[i].size(); j++) {
-            if (dense[i][j] != 0) { // only add non-zero entries
-                sparse[{i, j}] = dense[i][j];
+    if (sparse.size() != sparse[0].size()) {
+        cerr << "Error: matrix is not square." << endl;
+        exit(1);
+    }
+
+    for (int i = 0; i < sparse.size(); i++) {
+        for (int j = 0; j <= i; j++) { // only add lower triangular
+            if (sparse[i][j] != 0) { // only add non-zero entries
+                dense[{i, j}] = sparse[i][j];
             }
         }
     }
 
+    return dense;
+}
+
+vector<vector<double>> sparsen(const qubo_t& dense) {
+    int n = qubo_size(dense);
+    vector<vector<double>> sparse(n, vector<double>(n, 0.0));
+    for (const auto& entry : dense) {
+        sparse[entry.first.first][entry.first.second] = entry.second;
+    }
     return sparse;
 }
 
@@ -240,7 +223,7 @@ optimize evaluate by getting diff caused by flipping one bit
 */
 
 int main() {
-    // qubo_t Q = sparsen({
+    // qubo_t Q = condense({
     //     { -2,  1,  1,  0,  0 },
     //     {  1, -2,  0,  1,  0 },
     //     {  1,  0, -3,  1,  1 },
@@ -248,9 +231,7 @@ int main() {
     //     {  0,  0,  1,  1, -2 }
     // });
 
-    qubo_t Q = parse_qubo(read_file("qubo.txt"));
-
-    // qubo_t Q = sparsen({
+    // qubo_t Q = condense({
     //     {-17, 10, 10, 10, 0, 20},
     //     {10, -18, 10, 10, 10, 20},
     //     {10, 10, -29, 10, 20, 20},
@@ -259,19 +240,12 @@ int main() {
     //     {20, 20, 20, 10, 10, -28}
     // });
 
-    // qubo_t Q = unsparse(sparse); // just for now.
+    qubo_t Q = parse_qubo(read_file("qubo.txt"));
 
-    // cout << Q << endl;
-
-    // trial({1, 0, 0, 0, 1, 0}, Q);
-
-    // unsigned seed = time(0); // 42
     random_device rd;
     unsigned seed = rd();
 
     settings s = {.max_iter = 40000, .T_0 = 100.0, .temp_scheduler = make_geometric_scheduler(0.999), .seed = seed};
-
-    // settings s = {.max_iter = 5, .T_0 = 100.0, .temp_scheduler = linear_scheduler, .seed = 2};
 
     vector<result> results = multithreaded_sim_anneal(Q, s, 4, 4);
     result best = results[0];
