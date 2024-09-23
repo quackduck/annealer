@@ -3,13 +3,18 @@
 #include <vector>
 #include <random>
 #include <thread>
+#include <algorithm>
+#include <functional>
+#include <map>
+
 #include "parser.hh"
 
 using namespace std;
 
 using solution_t = vector<bool>;
-// using qubo_t = vector<vector<double>>;
 using qubo_t = map<pair<int, int>, double>;
+// using scheduler_t = double (*)(double T_0, double T, int iter, int max_iter);
+using scheduler_t = function<double(double T_0, double T, int iter, int max_iter)>;
 
 ostream& operator << (ostream& os, const solution_t& x) {
     for (auto xi : x) os << xi << ' ';
@@ -18,7 +23,7 @@ ostream& operator << (ostream& os, const solution_t& x) {
 
 ostream& operator << (ostream& os, const qubo_t& Q) {
     for (const auto& entry : Q) {
-        os << '[' + entry.first.first << ' ' << entry.first.second << "] : " << entry.second << endl;
+        os << '[' << entry.first.first << ' ' << entry.first.second << "] : " << entry.second << endl;
     }
     return os;
 }
@@ -26,7 +31,7 @@ ostream& operator << (ostream& os, const qubo_t& Q) {
 struct settings {
     int max_iter;
     double T_0;
-    double (*temp_scheduler)(double T_0, double T, int iter, int max_iter);
+    scheduler_t temp_scheduler;
     unsigned seed;
 };
 
@@ -99,76 +104,103 @@ result sim_anneal(const qubo_t& Q, const settings s) { // intentionally get copy
     return {best_x, best_f_x};
 }
 
-result multithreaded_sim_anneal(const qubo_t& Q, const settings s, int num_threads) {
+// returns sorted results of length num_threads * samples_per_thread
+vector<result> multithreaded_sim_anneal(const qubo_t& Q, const settings s, int num_threads, int samples_per_thread = 1) {
     vector<thread> threads;
-    vector<result> results(num_threads);
+    vector<result> results(num_threads * samples_per_thread);
     for (int i = 0; i < num_threads; i++) {
-        settings s_copy = s;
-        s_copy.seed += i;
-        threads.emplace_back([&results, i, &Q, s_copy](){
-            results[i] = sim_anneal(Q, s_copy);
+        threads.emplace_back([&results, i, &Q, s, samples_per_thread](){
+            for (int j = 0; j < samples_per_thread; j++) {
+                settings s_copy = s;
+                s_copy.seed += i * samples_per_thread + j;
+                results[i * samples_per_thread + j] = sim_anneal(Q, s_copy);
+            }
         });
     }
 
     for (auto& t : threads) t.join();
 
-    return *min_element(results.begin(), results.end(), [](const result& a, const result& b) {
+    sort(results.begin(), results.end(), [](const result& a, const result& b) {
         return a.energy < b.energy;
     });
+
+    return results;
 }
 
 double linear_scheduler(double T_0, double T, int iter, int max_iter) {
     return T_0 - (T_0 / max_iter) * iter;
 }
 
-double geometric_scheduler(double T_0, double T, int iter, int max_iter) {
-    return T * 0.999;
+// double geometric_scheduler(double T_0, double T, int iter, int max_iter) {
+//     return T * 0.99;
+// }
+
+scheduler_t make_geometric_scheduler(double alpha) {
+    return [alpha](double T_0, double T, int iter, int max_iter) {
+        return T * alpha;
+    };
 }
+
 
 void trial(solution_t x, const qubo_t& Q) {
     cout << "For solution: " << x << endl;
     cout << "Energy: " << evaluate(x, Q) << endl << endl;
 }
 
-// qubo_t unsparse(const map<pair<int, int>, double>& sparse) {
-//     int n = 0;
-//     for (const auto& entry : sparse) {
-//         n = max(n, max(entry.first.first, entry.first.second));
-//     }
-//     n++;
+bool operator < (const result& a, const result& b) {
+    return a.energy > b.energy; // reverse order
+}
 
-//     qubo_t Q(n, vector<double>(n, 0.0));
-//     for (const auto& entry : sparse) {
-//         Q[entry.first.first][entry.first.second] = entry.second;
-//     }
-//     return Q;
-// }
+void present_results(const vector<result>& results) {
+    map<result, int> counts;
+    for (const auto& r : results) {
+        counts[r]++;
+    }
+
+    for (const auto& entry : counts) {
+        cout << "Energy: " << entry.first.energy << " (" << entry.second << "x)" << '\n';
+        cout << "Solution: " << entry.first.solution << '\n';
+    }
+}
+
+qubo_t sparsen(vector<vector<double>> dense) {
+    qubo_t sparse;
+
+    for (int i = 0; i < dense.size(); i++) {
+        for (int j = 0; j < dense[i].size(); j++) {
+            if (dense[i][j] != 0) { // only add non-zero entries
+                sparse[{i, j}] = dense[i][j];
+            }
+        }
+    }
+
+    return sparse;
+}
 
 /* todo:
-use sparse qubo
 maybe flip all bits in sequence instead of random ones?
 optimize evaluate by getting diff caused by flipping one bit
 */
 
 int main() {
-    // qubo_t Q = {
+    // qubo_t Q = sparsen({
     //     { -2,  1,  1,  0,  0 },
     //     {  1, -2,  0,  1,  0 },
     //     {  1,  0, -3,  1,  1 },
     //     {  0,  1,  1, -3,  1 },
     //     {  0,  0,  1,  1, -2 }
-    // };
+    // });
 
     qubo_t Q = parse_qubo(read_file("qubo.txt"));
 
-    // qubo_t Q = {
+    // qubo_t Q = sparsen({
     //     {-17, 10, 10, 10, 0, 20},
     //     {10, -18, 10, 10, 10, 20},
     //     {10, 10, -29, 10, 20, 20},
     //     {10, 10, 10, -19, 10, 10},
     //     {0, 10, 20, 10, -17, 10},
     //     {20, 20, 20, 10, 10, -28}
-    // };
+    // });
 
     // qubo_t Q = unsparse(sparse); // just for now.
 
@@ -180,11 +212,16 @@ int main() {
     random_device rd;
     unsigned seed = rd();
 
-    settings s = {.max_iter = 10000, .T_0 = 100.0, .temp_scheduler = geometric_scheduler, .seed = seed};
+    settings s = {.max_iter = 10000, .T_0 = 100.0, .temp_scheduler = make_geometric_scheduler(0.99), .seed = seed};
 
-    result r = multithreaded_sim_anneal(Q, s, 4);
+    vector<result> results = multithreaded_sim_anneal(Q, s, 8, 4);
+    result best = results[0];
 
-    cout << "Best energy: " << r.energy << endl;
-    cout << "Best solution: " << r.solution << endl;
+    cout << "Best energy: " << best.energy << '\n';
+    cout << "Solution: " << best.solution << '\n';
+    cout << '\n';
+
+    present_results(results);
+
     return 0;
 }
