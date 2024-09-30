@@ -2,7 +2,7 @@
 
 # Compiler settings
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -pthread
+CXXFLAGS = -std=c++17 -Wall -pthread -Ofast# -O3 -march=native -mtune=native
 
 # Source files
 SRCS = annealer.cpp parser.cpp

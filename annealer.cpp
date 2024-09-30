@@ -12,7 +12,8 @@
 using namespace std;
 
 using solution_t = vector<bool>;
-using qubo_t = map<pair<int, int>, double>;
+// using qubo_t = map<pair<int, int>, double>;
+using qubo_t = vector<pair<pair<int, int>, double>>;
 using scheduler_t = function<double(double T_0, double T, int iter, int max_iter)>;
 
 ostream& operator << (ostream& os, const solution_t& x) {
@@ -27,6 +28,52 @@ ostream& operator << (ostream& os, const qubo_t& Q) {
     return os;
 }
 
+int qubo_size(const qubo_t& Q) {
+    int n = 0;
+    for (const auto& entry : Q) {
+        n = max(n, entry.first.first);
+    }
+    return n + 1; // 0 indexed
+}
+
+struct QUBO {
+    int n;
+    qubo_t Q;
+    vector<vector<pair<int, double>>> affectedby; // list of js that are affected by flipping a certain bit
+
+    QUBO(qubo_t Q) : Q(Q) {
+        n = qubo_size(Q);
+        affectedby.resize(n, {});
+        // for (const auto& entry : Q) {
+        for (const auto& [idx, val] : Q) {
+            affectedby[idx.first].emplace_back(idx.second, val);
+            if (idx.first == idx.second) continue;
+            affectedby[idx.second].emplace_back(idx.first, val);
+        }
+    }
+
+    double evaluate(const solution_t& x) const {
+        double value = 0.0;
+        for (const auto& [idx, val] : Q)
+            if (x[idx.first] && x[idx.second]) value += val;
+        return value;
+    }
+
+    double evaluateDiff(const solution_t& x, int flip_idx) const {
+        double diff = 0.0; // first, find what would be the value if this bit was on
+        for (const auto& [j, Q_ij] : affectedby[flip_idx]) if (x[j] || j == flip_idx) diff += Q_ij;
+        return x[flip_idx] ? -diff : diff; // if on, turn off. if off, turn on.
+    }
+
+    friend ostream& operator << (ostream& os, const QUBO& Q) {
+        os << "QUBO of size " << Q.n << ":\n";
+        for (const auto& entry : Q.Q) {
+            os << '[' << entry.first.first << ' ' << entry.first.second << "] : " << entry.second << endl;
+        }
+        return os;
+    }
+};
+
 struct settings {
     int max_iter;
     double T_0;
@@ -39,60 +86,18 @@ struct result {
     double energy;
 };
 
-double evaluate(const solution_t& x, const qubo_t& Q) {
-    double value = 0.0;
-    for (const auto& entry : Q) {
-        // value += entry.second * x[entry.first.first] * x[entry.first.second];
-        if (x[entry.first.first] && x[entry.first.second]) value += entry.second;
-    }
-    return value;
-}
-
-double evaluateDiff(const solution_t& x, const qubo_t& Q, int flip_idx) {
-    double diff = 0.0;
-    for (const auto& entry : Q) {
-        if (entry.first.first == flip_idx || entry.first.second == flip_idx) {
-            if (x[entry.first.first] && x[entry.first.second]) {
-                // both on, flipping either will turn it off.
-                diff -= entry.second;
-            } else if (x[entry.first.first] || x[entry.first.second]) {
-                // one on. flip it on if the one we're flipping is off.
-                if (entry.first.first == flip_idx && !x[entry.first.first]) {
-                    diff += entry.second;
-                } else if (entry.first.second == flip_idx && !x[entry.first.second]) {
-                    diff += entry.second;
-                }
-            } else {
-                // both off. flip it on only if both are on.
-                if (entry.first.first == flip_idx && entry.first.second == flip_idx) {
-                    diff += entry.second;
-                }
-            }
-        }
-    }
-    return diff;
-}
-
-int qubo_size(const qubo_t& Q) {
-    int n = 0;
-    for (const auto& entry : Q) {
-        n = max(n, entry.first.first);
-    }
-    return n + 1; // 0 indexed
-}
-
-result sim_anneal(const qubo_t& Q, const settings s) { // intentionally get copy of settings
-    int n = qubo_size(Q);
+result sim_anneal(const QUBO& Q, const settings s) { // intentionally get copy of settings
+    // int n = qubo_size(Q);
 
     mt19937 gen(s.seed);
     uniform_real_distribution<> dis(0.0, 1.0);
-    uniform_int_distribution<> flip_dis(0, n - 1);
+    uniform_int_distribution<> flip_dis(0, Q.n - 1);
 
-    solution_t x(n, 0);
+    solution_t x(Q.n, 0);
     for (auto xi : x) {
         xi = dis(gen) < 0.5 ? 0 : 1;
     }
-    double f_x = evaluate(x, Q);
+    double f_x = Q.evaluate(x);
 
     solution_t best_x = x;
     double best_f_x = f_x;
@@ -102,11 +107,9 @@ result sim_anneal(const qubo_t& Q, const settings s) { // intentionally get copy
         solution_t x_prime = x;
         int flip_idx = flip_dis(gen);
 
-        double f_x_prime = evaluateDiff(x, Q, flip_idx) + f_x;
+        double f_x_prime = Q.evaluateDiff(x, flip_idx) + f_x;
 
         x_prime[flip_idx] = !x_prime[flip_idx];
-
-        // double f_x_prime = evaluate(x_prime, Q);
 
         if (f_x_prime < f_x || dis(gen) < exp((f_x - f_x_prime) / T)) {
             x = x_prime;
@@ -134,8 +137,8 @@ void assert_lower_triangular(const qubo_t& Q) {
 }
 
 // returns sorted results of length num_threads * samples_per_thread
-vector<result> multithreaded_sim_anneal(const qubo_t& Q, const settings s, int num_threads, int samples_per_thread = 1) {
-    assert_lower_triangular(Q);
+vector<result> multithreaded_sim_anneal(const QUBO& Q, const settings s, int num_threads, int samples_per_thread = 1) {
+    assert_lower_triangular(Q.Q);
     vector<thread> threads;
     vector<result> results(num_threads * samples_per_thread);
     for (int i = 0; i < num_threads; i++) {
@@ -168,9 +171,9 @@ scheduler_t make_geometric_scheduler(double alpha) {
 }
 
 
-void trial(solution_t x, const qubo_t& Q) {
+void trial(solution_t x, const QUBO& Q) {
     cout << "For solution: " << x << endl;
-    cout << "Energy: " << evaluate(x, Q) << endl << endl;
+    cout << "Energy: " << Q.evaluate(x) << endl << endl;
 }
 
 bool operator < (const result& a, const result& b) {
@@ -200,7 +203,8 @@ qubo_t condense(vector<vector<double>> sparse) {
     for (int i = 0; i < sparse.size(); i++) {
         for (int j = 0; j <= i; j++) { // only add lower triangular
             if (sparse[i][j] != 0) { // only add non-zero entries
-                dense[{i, j}] = sparse[i][j];
+                // dense[{i, j}] = sparse[i][j];
+                dense.push_back({{i, j}, sparse[i][j]});
             }
         }
     }
@@ -217,9 +221,23 @@ vector<vector<double>> sparsen(const qubo_t& dense) {
     return sparse;
 }
 
+QUBO randgen_qubo(int n) {
+    qubo_t Q;
+    random_device rd;
+    unsigned seed = rd();
+    mt19937 gen(seed);
+    uniform_real_distribution<> dis(-10.0, 10.0);
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j <= i; j++) {
+            // Q[{i, j}] = dis(gen);
+            Q.push_back({{i, j}, dis(gen)});
+        }
+    }
+    return Q;
+}
+
 /* todo:
 maybe flip all bits in sequence instead of random ones?
-optimize evaluate by getting diff caused by flipping one bit
 */
 
 int main() {
@@ -240,7 +258,13 @@ int main() {
     //     {20, 20, 20, 10, 10, -28}
     // });
 
-    qubo_t Q = parse_qubo(read_file("qubo.txt"));
+    auto Q = QUBO(parse_qubo(read_file("qubo.txt")));
+
+    // auto Q = randgen_qubo(10);
+
+    cout << Q;
+
+    // auto Q = randgen_qubo(10);
 
     random_device rd;
     unsigned seed = rd();

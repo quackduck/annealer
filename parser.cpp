@@ -1,14 +1,14 @@
 #include <iostream>
 #include <fstream>
-#include <map>
+// #include <map>
 #include <string>
 #include <sstream>
 #include "parser.hh"
 
 using namespace std;
 
-map<pair<int, int>, double> parse_qubo(const string& input) {
-    map<pair<int, int>, double> result;
+vector<pair<pair<int, int>, double>> parse_qubo(const string& input) {
+    vector<pair<pair<int, int>, double>> result;
 
     string cleanInput = input.substr(1, input.size() - 2); // Strip the outermost brackets
     stringstream ss(cleanInput);
@@ -27,7 +27,8 @@ map<pair<int, int>, double> parse_qubo(const string& input) {
 
         // extras: comma, close bracket, comma.
         s >> x >> foo >> y >> foo >> foo >> value;
-        result[{x, y}] = value;
+        // result[{x, y}] = value;
+        result.push_back({{x, y}, value});
     }
     return result;
 }
