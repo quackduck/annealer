@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <iomanip>
 
 #include "parser.hh"
 
@@ -192,6 +193,16 @@ void present_results(const vector<result>& results) {
     }
 }
 
+void present_energies(const vector<result>& results) {
+    map<double, int> counts;
+    for (const auto& r : results) {
+        counts[r.energy]++;
+    }
+    for (const auto& entry : counts) {
+        cout << "Energy: " << entry.first << " (" << entry.second << "x)" << '\n';
+    }
+}
+
 qubo_t condense(vector<vector<double>> sparse) {
     qubo_t dense;
 
@@ -241,6 +252,8 @@ maybe flip all bits in sequence instead of random ones?
 */
 
 int main() {
+    // cout << fixed << setprecision(numeric_limits<double>::max_digits10);
+    cout << fixed << setprecision(5);
     // qubo_t Q = condense({
     //     { -2,  1,  1,  0,  0 },
     //     {  1, -2,  0,  1,  0 },
@@ -258,11 +271,11 @@ int main() {
     //     {20, 20, 20, 10, 10, -28}
     // });
 
-    auto Q = QUBO(parse_qubo(read_file("qubo.txt")));
+    // auto Q = QUBO(parse_qubo(read_file("qubo.txt")));
 
-    // auto Q = randgen_qubo(10);
+    auto Q = randgen_qubo(100);
 
-    cout << Q;
+    // cout << Q;
 
     // auto Q = randgen_qubo(10);
 
@@ -278,7 +291,8 @@ int main() {
     cout << "Solution: " << best.solution << '\n';
     cout << '\n';
 
-    present_results(results);
+    // present_results(results);
+    present_energies(results);
 
     return 0;
 }
