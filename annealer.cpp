@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <iomanip>
+#include <cmath>
 
 #include "parser.hh"
 
@@ -195,29 +196,34 @@ void trial(solution_t x, const QUBO& Q) {
     cout << "Energy: " << Q.evaluate(x) << endl << endl;
 }
 
-bool operator < (const result& a, const result& b) {
-    return a.energy > b.energy; // reverse order
-}
+void present_results(const vector<result>& results, bool show_sols = true, int precision = 5) {
+    map<long, map<solution_t, int>> counts; // energy -> solution -> count
+    auto d_to_l = [precision](double d) {
+        return static_cast<long>(round(d * pow(10, precision)));
+    };
+    auto l_to_d = [precision](long l) {
+        return static_cast<double>(l) / pow(10, precision);
+    };
 
-void present_results(const vector<result>& results) {
-    map<result, int> counts;
     for (const auto& r : results) {
-        counts[r]++;
+        counts[d_to_l(r.energy)][r.solution]++;
     }
 
-    for (const auto& entry : counts) {
-        cout << "Energy: " << entry.first.energy << " (" << entry.second << "x)" << '\n';
-        cout << "Solution: " << entry.first.solution << '\n';
-    }
-}
+    cout << '\n';
 
-void present_energies(const vector<result>& results) {
-    map<double, int> counts;
-    for (const auto& r : results) {
-        counts[r.energy]++;
-    }
-    for (const auto& entry : counts) {
-        cout << "Energy: " << entry.first << " (" << entry.second << "x)" << '\n';
+    cout << fixed << setprecision(precision);
+
+    cout << "Best energy: " << results[0].energy << '\n';
+    cout << "Worst energy: " << results.back().energy << '\n';
+    cout << "Best solution: " << results[0].solution << '\n';
+
+    cout << '\n';
+
+    for (const auto& [energy, sols] : counts) {
+        cout << "Energy: " << l_to_d(energy) << '\n';
+        for (const auto& [sol, count] : sols) {
+            cout << "\tSolution: " << sol << " (" << count << "x)" << '\n';
+        }
     }
 }
 
@@ -271,7 +277,7 @@ maybe flip all bits in sequence instead of random ones?
 
 int main() {
     // cout << fixed << setprecision(numeric_limits<double>::max_digits10);
-    cout << fixed << setprecision(5);
+    // cout << fixed << setprecision(5);
     // qubo_t Q = condense({
     //     { -2,  1,  1,  0,  0 },
     //     {  1, -2,  0,  1,  0 },
@@ -302,17 +308,19 @@ int main() {
 
     settings s = {.max_iter = 40000, .T_0 = 100.0, .temp_scheduler = make_geometric_scheduler(0.999), .seed = seed};
 
-    // vector<result> results = multithreaded_sim_anneal(Q, s, 4, 4);
     vector<result> results = branch_rejoin_sa(Q, s, 4, 4, 4);
 
     result best = results[0];
 
-    cout << "Best energy: " << best.energy << '\n';
-    cout << "Solution: " << best.solution << '\n';
-    cout << '\n';
+    cout << "\nBranch rejoin (approach B) results: " << '\n';
+    present_results(results);
 
-    // present_results(results);
-    present_energies(results);
+    results = multithreaded_sim_anneal(Q, s, 4, 4);
+
+    best = results[0];
+
+    cout << "\nMultithreaded (approach C) results: " << '\n';
+    present_results(results);
 
     return 0;
 }
