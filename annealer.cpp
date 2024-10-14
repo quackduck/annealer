@@ -142,18 +142,27 @@ void assert_lower_triangular(const qubo_t& Q) {
     }
 }
 
-// returns sorted results of length num_threads * samples_per_thread
-vector<result> multithreaded_sim_anneal(const QUBO& Q, const settings s, int num_threads, int samples_per_thread = 1, const solution_t init_guess = {}) {
+// returns sorted results of length num_threads * samples_per_thread. first elem is best.
+vector<result> multithreaded_sim_anneal(const QUBO& Q, const settings s, int num_threads, int samples_per_thread = 1, const vector<solution_t> init_guess = {}) {
     assert_lower_triangular(Q.Q);
     vector<thread> threads;
     vector<result> results(num_threads * samples_per_thread);
+    vector<solution_t> local_init_guess = init_guess;
+
+    if (init_guess.size() != num_threads) {
+        if (!init_guess.empty()) {
+            local_init_guess = vector<solution_t>(num_threads, init_guess[0]);
+        } else {
+            local_init_guess = vector<solution_t>(num_threads, solution_t{});
+        }
+    }
 
     for (int i = 0; i < num_threads; i++) {
-        threads.emplace_back([&results, i, &Q, s, samples_per_thread, init_guess](){
+        threads.emplace_back([&results, i, &Q, s, samples_per_thread, local_init_guess](){
             for (int j = 0; j < samples_per_thread; j++) {
                 settings s_copy = s;
-                s_copy.seed += i * samples_per_thread + j;
-                results[i * samples_per_thread + j] = sim_anneal(Q, s_copy, init_guess);
+                s_copy.seed += i * samples_per_thread + j; // different seed for each thread
+                results[i * samples_per_thread + j] = sim_anneal(Q, s_copy, local_init_guess[i]);
             }
         });
     }
@@ -167,13 +176,50 @@ vector<result> multithreaded_sim_anneal(const QUBO& Q, const settings s, int num
     return results;
 }
 
+// takes in a sorted list of results and returns at least n solutions with as many unique solutions as possible that all have the best energy
+vector<solution_t> best_effort_unique(const vector<result>& results, int n) {
+    if (results.empty()) return {};
+
+    vector<solution_t> result(n);
+    map<solution_t, bool> best_unique_solutions;
+
+    for (int i = 0; i < results.size(); i++) {
+        if (results[i].energy == results[0].energy) {
+            best_unique_solutions[results[i].solution] = true;
+        } else {
+            break;
+        }
+    }
+
+    int num_best_unique = best_unique_solutions.size();
+
+    int i = 0;
+    for (const auto& [sol, _] : best_unique_solutions) {
+        if (i == n) break;
+        result[i++] = sol;
+    }
+    for (int j = 0; i < n; i++, j++) { // copy the start to fill the rest
+        result[i] = result[j];
+    }
+
+    // debug
+
+    cout << "Num best unique: " << num_best_unique << '\n';
+    // for (const auto& sol : result) {
+    //     cout << sol << '\n';
+    // }
+    // cout << '\n';
+
+    return result;
+}
+
 
 vector<result> branch_rejoin_sa(const QUBO& Q, const settings s, int num_threads, int num_branches, int samples_per_thread = 1) {
     auto modified_settings = s;
     modified_settings.max_iter /= num_branches;
     vector<result> results;
     for (int i = 0; i < num_branches; i++) {
-        results = multithreaded_sim_anneal(Q, modified_settings, num_threads, samples_per_thread, results.empty() ? solution_t{} : results[0].solution);
+        results = multithreaded_sim_anneal(Q, modified_settings, num_threads, samples_per_thread, best_effort_unique(results, num_threads));
         cout << "Branch " << i << " best energy: " << results[0].energy << '\n';
         cout << "Branch " << i << " worst energy: " << results.back().energy << '\n';
     }
@@ -215,7 +261,7 @@ void present_results(const vector<result>& results, bool show_sols = true, int p
 
     cout << "Best energy: " << results[0].energy << '\n';
     cout << "Worst energy: " << results.back().energy << '\n';
-    cout << "Best solution: " << results[0].solution << '\n';
+    // cout << "Best solution: " << results[0].solution << '\n';
 
     cout << '\n';
 
@@ -297,7 +343,7 @@ int main() {
 
     // auto Q = QUBO(parse_qubo(read_file("qubo.txt")));
 
-    auto Q = randgen_qubo(100);
+    auto Q = randgen_qubo(300);
 
     // cout << Q;
 
@@ -308,14 +354,14 @@ int main() {
 
     settings s = {.max_iter = 40000, .T_0 = 100.0, .temp_scheduler = make_geometric_scheduler(0.999), .seed = seed};
 
-    vector<result> results = branch_rejoin_sa(Q, s, 4, 4, 4);
+    vector<result> results = branch_rejoin_sa(Q, s, 8, 4, 4); // threads, branches, samples per thread
 
     result best = results[0];
 
     cout << "\nBranch rejoin (approach B) results: " << '\n';
     present_results(results);
 
-    results = multithreaded_sim_anneal(Q, s, 4, 4);
+    results = multithreaded_sim_anneal(Q, s, 8, 4); // threads, samples per thread
 
     best = results[0];
 
