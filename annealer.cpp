@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <iostream>
 #include <ostream>
 #include <vector>
@@ -87,7 +88,7 @@ struct result {
     double energy;
 };
 
-result sim_anneal(const QUBO& Q, const settings s) { // intentionally get copy of settings
+result sim_anneal(const QUBO& Q, const settings s, const solution_t init_guess = {}) { // intentionally get copy of settings
     // int n = qubo_size(Q);
 
     mt19937 gen(s.seed);
@@ -98,6 +99,9 @@ result sim_anneal(const QUBO& Q, const settings s) { // intentionally get copy o
     for (auto xi : x) {
         xi = dis(gen) < 0.5 ? 0 : 1;
     }
+
+    if (!init_guess.empty()) x = init_guess;
+
     double f_x = Q.evaluate(x);
 
     solution_t best_x = x;
@@ -138,16 +142,17 @@ void assert_lower_triangular(const qubo_t& Q) {
 }
 
 // returns sorted results of length num_threads * samples_per_thread
-vector<result> multithreaded_sim_anneal(const QUBO& Q, const settings s, int num_threads, int samples_per_thread = 1) {
+vector<result> multithreaded_sim_anneal(const QUBO& Q, const settings s, int num_threads, int samples_per_thread = 1, const solution_t init_guess = {}) {
     assert_lower_triangular(Q.Q);
     vector<thread> threads;
     vector<result> results(num_threads * samples_per_thread);
+
     for (int i = 0; i < num_threads; i++) {
-        threads.emplace_back([&results, i, &Q, s, samples_per_thread](){
+        threads.emplace_back([&results, i, &Q, s, samples_per_thread, init_guess](){
             for (int j = 0; j < samples_per_thread; j++) {
                 settings s_copy = s;
                 s_copy.seed += i * samples_per_thread + j;
-                results[i * samples_per_thread + j] = sim_anneal(Q, s_copy);
+                results[i * samples_per_thread + j] = sim_anneal(Q, s_copy, init_guess);
             }
         });
     }
@@ -158,6 +163,19 @@ vector<result> multithreaded_sim_anneal(const QUBO& Q, const settings s, int num
         return a.energy < b.energy;
     });
 
+    return results;
+}
+
+
+vector<result> branch_rejoin_sa(const QUBO& Q, const settings s, int num_threads, int num_branches, int samples_per_thread = 1) {
+    auto modified_settings = s;
+    modified_settings.max_iter /= num_branches;
+    vector<result> results;
+    for (int i = 0; i < num_branches; i++) {
+        results = multithreaded_sim_anneal(Q, modified_settings, num_threads, samples_per_thread, results.empty() ? solution_t{} : results[0].solution);
+        cout << "Branch " << i << " best energy: " << results[0].energy << '\n';
+        cout << "Branch " << i << " worst energy: " << results.back().energy << '\n';
+    }
     return results;
 }
 
@@ -284,7 +302,9 @@ int main() {
 
     settings s = {.max_iter = 40000, .T_0 = 100.0, .temp_scheduler = make_geometric_scheduler(0.999), .seed = seed};
 
-    vector<result> results = multithreaded_sim_anneal(Q, s, 4, 4);
+    // vector<result> results = multithreaded_sim_anneal(Q, s, 4, 4);
+    vector<result> results = branch_rejoin_sa(Q, s, 4, 4, 4);
+
     result best = results[0];
 
     cout << "Best energy: " << best.energy << '\n';
